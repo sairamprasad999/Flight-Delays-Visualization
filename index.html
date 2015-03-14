@@ -1,0 +1,622 @@
+<html>
+<head>
+    <link href='http://fonts.googleapis.com/css?family=Open+Sans' rel='stylesheet' type='text/css'>
+    <!-- Load the d3 library. -->
+    <script src="http://d3js.org/d3.v3.min.js" charset="utf-8"></script>
+    <script src="http://d3js.org/topojson.v1.min.js"></script>
+    <script src="colorbrewer.js"></script>
+    <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.2/jquery.min.js"></script>
+    <style>
+        body {
+            font: 14px; 
+            font-family: "Open Sans"; 
+            background-color: #000;
+            margin-left: 20px;        
+        }
+        div {
+            margin: 10px;
+        }
+        p {
+            width: 960px;
+        }
+        h1,h2,h3,h4,h5,h6,li,ul,p,div {
+            color: #fff; 
+            text-align: justify;
+        }
+        li {
+            float: left;
+        }
+        li.key {
+            border-top-width: 15px;
+            border-top-style: solid;
+            font-size: .75em;
+            width: 14%;
+            padding-left: 0;
+            padding-right: 0;
+            text-align: center;
+        }
+        .axis path {}
+        .axis line {
+            fill: none;
+            stroke: #000;
+            shape-rendering: crispEdges;
+        }
+        .bar {
+            fill: steelblue;
+        }
+        .x.axis path {
+            display: none;
+        }
+        #map1 #map2 {
+            margin-top: 0px;
+            margin-bottom: 0px;
+        }
+        svg { 
+            background-color: "black";
+        }
+        #legend {
+            padding: 0em 0 0 0em;
+        }
+    </style>
+</head>
+
+<body>
+<div>
+<h1>Airports, Flights, and You: How to Avoid Delays and Cancellations</h2>
+<p>( Data from <a href="http://stat-computing.org/dataexpo/2009/the-data.html  
+">Dataexpo 2008</a> )
+</p>
+<h2>Average Lateness in Minutes of Leaving United States Airports</h2>
+
+<div id="legend" style="width:660px;text-align:center; margin: 0 150px 0 150px;">
+    Lateness of Flight (Negative Numbers Indicate the Flight Left Early)</div>
+<div id="map1"></div>
+<div id="map2"></div>
+<p>The idea of this visualization is to show how airport delays may be affected
+  by regions. Typically, when selecting an airport we only care about where
+  the airport is and how likely you are to be delayed when leaving. This
+  map capitalizes on that by showing a diverging scale that uses location
+  to give an overall idea of lateness by region.</p>
+<p>As you can see from this visualization, the airports that tend to be late
+    seem to occur with a type of pattern. In particular, the airports on coasts
+    are almost always a little late while airports in the Rocky Mountain region
+    have a tendancy to be on time or close to early. We then examined flights
+    between the most popular 18 airports in the USA to determine what exact
+    routes had a tendancy to be late versus early.</p>
+</div>
+
+<script>
+// ~~~~~~~~~~~~~~~~~~~~~~~DOTPLOT SECTION~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+// do simple mapping and create SVG of the map
+var projection = d3.geo.albersUsa();
+var path = d3.geo.path().projection(projection);
+var counties, states;
+
+//important objects for storing port data efficiently
+var portData = {};
+var topPorts = ["ATL", "LAX", "ORD", "DFW", "DEN", "JFK", "SFO", "CLT", 
+    "LAS", "PHX", "MIA", "IAH", "SEA", "MSP", "DTW", "BOS", "PHL", "DCA"];
+var portNames = [];
+function port(dex, total, sum) {
+    this.dex = dex;
+    this.total = total;
+    this.sum = sum;
+}
+
+// draw map with state lines, borrowed from class
+d3.json("us.json", function(error, shapes) {
+    counties = topojson.feature(shapes, shapes.objects.counties).features;
+    states = topojson.feature(shapes, shapes.objects.states).features;
+    //map state lines, borrowed from class
+    var width = 960, height = 400;
+    var svg1 = d3.select("#map1").append("svg")
+        .attr("width", width)
+        .attr("height", height);
+
+    var svg4 = d3.select("#map2").append("svg")
+        .attr("width", width)
+        .attr("height", height);
+
+    var g = svg1.append("g");
+    var g2 = svg4.append("g");
+    g.selectAll("path")
+            .data(states)
+            .enter().append("path")
+            .attr("d", path)
+            .style("stroke", "#777")
+            .style("fill", "#222");
+
+    g2.selectAll("path")
+            .data(states)
+            .enter().append("path")
+            .attr("d", path)
+            .style("stroke", "#777")
+            .style("fill", "#222");
+
+    svg1.append("text")
+        .attr("x", (width / 2))             
+        .attr("y", (height/ 15))
+        .attr("text-anchor", "middle")  
+        .style("font-size", "100%")
+        .style("fill", "white")
+        .text("All Airports That Have Data");
+
+    svg4.append("text")
+            .attr("x", (width / 2))             
+            .attr("y", (height/ 15))
+            .attr("text-anchor", "middle")  
+            .style("font-size", "100%")
+            .style("fill", "white")
+            .text("Top 18 Airports");
+
+    //dealing with airports from here on 
+
+    // add all airports to list
+    d3.json("allports.json", function(error, ports) {
+        for (i = 0; i < ports.length; i++) {
+          portData[ports[i].iata] = new port(i, 0 , 0);
+        }
+        // iterate through all data to populate port objects
+        d3.json("smalldata.json", function(error, dat) {
+            for (x = 0; x < dat.length; x++) {
+                if (dat[x].depdelay < 100000 && portData[dat[x].origin] != undefined){
+                  portData[dat[x].origin].total += 1;
+                  portData[dat[x].origin].sum += dat[x].depdelay;
+                }
+            }
+
+              // for original map 
+              // find bounds for the averages
+              var minAvg = 0;
+              var maxAvg = 0;
+              for (i = 0; i < ports.length; i++) {
+                tport = portData[ports[i].iata];
+                tavg = tport.sum / tport.total;
+                if (tavg < minAvg) {minAvg = tavg;}
+                if (tavg > maxAvg && tavg < 50) {maxAvg = tavg;}
+              }
+              // scale for delay ploting of airports
+              var delayScale = d3.scale.linear()
+                  .domain([minAvg, 0, maxAvg])
+                  .range(["#4575b4", "#ffffbf", "#d73027"]);
+              // plot all airports that have reasonable data
+              for (i = 0; i < ports.length; i++) {
+                tport = portData[ports[i].iata];
+                tavg = tport.sum / tport.total;
+                if (tport.total > 0 && projection([ ports[i].long, ports[i].lat]) != null) {
+                    var coords = projection([ ports[i].long, ports[i].lat]);
+                    svg1.append("circle").attr("cx", coords[0])
+                        .attr("cy", coords[1])
+                        .attr("r", 4)
+                        .style("fill", delayScale(tavg))
+                        .style("stroke", delayScale(tavg));
+                    // only for second map, add only if one of the 18
+                    if (topPorts.indexOf(ports[i].iata) >= 0 ) {
+                        var coords = projection([ ports[i].long, ports[i].lat]);
+                        svg4.append("circle").attr("cx", coords[0])
+                            .attr("cy", coords[1])
+                            .attr("r", 4)
+                            .style("fill", delayScale(tavg))
+                            .style("stroke", delayScale(tavg));
+                        svg4.append("text")
+                            .attr("dx", function(d) {return coords[0] + 10})
+                            .attr("dy", function(d) {return coords[1] + 5})
+                            .text(function(d) {return ports[i].iata})
+                            .style("font-size", "75%")
+                            .style("opacity", .6)
+                            .style("fill", "white");
+                    }
+                }
+              }
+
+              // plot legend, source below
+              // http://eyeseast.github.io/visible-data/2013/08/27/responsive-legends-with-d3/
+              var colors = d3.scale.quantize()
+                .range(colorbrewer.RdYlBu[7]);
+              var legend = d3.select('#legend')
+                .append('ul')
+                .attr('class', 'list-inline');
+              var keys = legend.selectAll('li.key')
+                .data(colors.range());
+              keys.enter().append('li')
+                .attr('class', 'key')
+                .style('border-top-color', String)
+                .text(function(d) {
+                    var r = colors.invertExtent(d);
+                    var x = (r[0] - 0.5)* (maxAvg + Math.abs(minAvg)) * (-1);
+                    return Math.floor(x -4);
+                  });
+
+      //close all of d3.json files.
+      });
+    
+  });
+});
+
+</script>
+
+<div>
+<h2>Delay on Flights Between Top American Airports</h2>
+</div>
+<div id="map3"></div>
+<div>
+    <p>
+    Undirected network of airports with each edge representing flights to and from
+    either airport to the other. Widths of edges indicate volume of flights and
+    colors indicate delay. Routes with more delay are redder, and routes with less
+     delay are greener. Routes with insignificant amount of traffic are ommitted
+     (the threshold for omission was determined by aesthetics).
+    </p>
+    <p>
+    Total delay of a route is the sum of delay of all flights on that route where 
+    delay for each flight is measured as 
+    minutes late/early at arrival gate. 
+    Delays are then averaged over number of flights and normalized to a [0, 100]
+    scale for coloring purposes. Color is determined using the normalized delay
+    scores and applying them to a continuous linear scale from green to red. This
+    system of coloring is useful as most delay scores of the routes are fairly
+    evenly distributed from 0 ~ 40 and a few are sparsely distributed from 40 ~ 100.
+    </p>
+    <p>
+    From these graphs, it seems O'Hare (ORD) is very busy and heavily delayed as
+    all the routes it is included in are on average delayed. Otherwise, cross-country
+    flights are typically more delayed, as expected. These cross-country itineraries seem
+    less delayed if they were to use transfer airports along the way!
+    </div>
+
+<script>
+
+//~~~~~~~~~~~~~~~~~~ FOR ROUTE MAPS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+var width = 960,
+    height = 400;
+
+var projection = d3.geo.albersUsa()
+    .scale(800)
+    .translate([width / 2, height / 2]);
+
+var path = d3.geo.path().projection(projection);
+    
+var svg3 = d3.select("#map3").append("svg")
+    .attr("width", width)
+    .attr("height", height);
+
+var svg2 = d3.select("#map3").append("svg")
+    .attr("width", width)
+    .attr("height", height);
+
+var g = svg3.append("g");
+var g2 = svg2.append("g");
+
+var usData; // to hold US map data
+var portsData; // to hold ports.json data
+var portPairDelay = {}; // record of {k: port pairs, v: avgdelay}
+var portPairFlightCounts = {}; // record of {k: port pairs, v: # of flights recorded}
+
+var GreenToRed = d3.scale.linear().domain([0, 100]).range(["green", "red"]);
+
+var diagonal = d3.svg.diagonal()
+    .source(function(d) { return { "x": d.source.y, "y": d.source.x }; })            
+    .target(function(d) { return { "x": d.target.y, "y": d.target.x }; })
+    .projection(function(d) { return [d.y, d.x]; });
+
+svg3.append("text")
+    .attr("x", (width / 2))             
+    .attr("y", (height/ 15))
+    .attr("text-anchor", "middle")  
+    .style("font-size", "100%")
+    .style("fill", "white")
+    .text("Routes with High Delay");
+
+svg2.append("text")
+        .attr("x", (width / 2))             
+        .attr("y", (height/ 15))
+        .attr("text-anchor", "middle")  
+        .style("font-size", "100%")
+        .style("fill", "white")
+        .text("Routes with Low Delay");
+
+function getPortCoords(portName) {
+    var coords = new Array(2);
+    portsData.forEach(function(portObj) {
+        if (portObj.iata == portName) {
+            coords[0] = portObj.long;
+            coords[1] = portObj.lat;
+        };
+    });
+    return coords;
+}
+        
+d3.json("us.json", function(error, us) {
+    usData = us;
+    
+    var states = topojson.feature(us, us.objects.states).features;
+    
+    g.selectAll("path")
+        .data(states)
+        .enter().append("path")
+        .attr("d", path)
+        .style("stroke", "#777")
+        .style("fill", "#222");
+
+    g2.selectAll("path")
+        .data(states)
+        .enter().append("path")
+        .attr("d", path)
+        .style("stroke", "#777")
+        .style("fill", "#222");
+
+    d3.json("ports.json", function(error, ports) {
+        portsData = ports;
+        var portNames = [];
+
+        portsData.forEach(function(portObj) { 
+            var portCoordsXY = projection([portObj.long, portObj.lat]);
+
+            // add airport to list before creating pairs
+            portNames.push(portObj.iata);
+        });
+
+        // create unique pairs of ports. (LAX, ATL) and (ATL, LAX) are
+        // considered the same because the graph will be undirected.
+        while (portNames.length > 0) {
+            for (var i = 1; i < portNames.length; i++) {
+                var portPair;
+                // maintain well-orderedness of pairs
+                if (portNames[0] < portNames[i]) {
+                    portPair = {port1: portNames[0], port2: portNames[i]};
+                } else {
+                    portPair = {port1: portNames[i], port2: portNames[0]};
+                }
+                // add portPair as key to hashtable
+                portPairDelay[JSON.stringify(portPair)] = 0;
+                portPairFlightCounts[JSON.stringify(portPair)] = 0;
+            }
+            portNames.splice(0, 1);
+        }
+
+        d3.json("data.json", function(error, flights) {
+            var flightsData = flights;
+
+            // aggregate flight data into records
+            flightsData.forEach(function(flightObj) {
+                if (flightObj.cancelled != 1 && flightObj.arrdelay != 1000000000 && flightObj.depdelay != 1000000000) {
+                    if (flightObj.origin < flightObj.dest) {
+                        portPair = {port1: flightObj.origin, port2: flightObj.dest};
+                    } else {
+                        portPair = {port1: flightObj.dest, port2: flightObj.origin};
+                    };
+
+                    if (portPairDelay.hasOwnProperty(JSON.stringify(portPair))) {
+                        portPairDelay[JSON.stringify(portPair)] = portPairDelay[JSON.stringify(portPair)] + flightObj.arrdelay;
+                        portPairFlightCounts[JSON.stringify(portPair)] = portPairFlightCounts[JSON.stringify(portPair)] + 1;
+                    };
+                };
+            });
+
+            // get averages of delays
+            for (var k in portPairDelay) {
+                if (portPairFlightCounts[k] == 0) continue;
+                portPairDelay[k] = portPairDelay[k] / portPairFlightCounts[k];
+            }
+
+            // find route with most flights
+            var maxFlightCount = 0;
+            for (var k in portPairFlightCounts) {
+                if (portPairFlightCounts[k] > maxFlightCount) {
+                    maxFlightCount = portPairFlightCounts[k];
+                }
+            }
+
+            // find max and min delay for normalization
+            var maxDelay = -100000;
+            var minDelay = 100000;
+            for (var k in portPairDelay) {
+                if (portPairDelay[k] > maxDelay) {
+                    maxDelay = portPairDelay[k];
+                }
+                if (portPairDelay[k] < minDelay) { 
+                    minDelay = portPairDelay[k];
+                }
+            }
+
+            // normalize delays from 0 to 100
+            for (var k in portPairDelay) {
+                portPairDelay[k] = 100 * ((portPairDelay[k] - minDelay) / (maxDelay - minDelay));
+            }
+
+            // for (var k in portPairDelay) {
+            //  console.log(JSON.parse(k).port1 + " " + JSON.parse(k).port2 + " " + portPairDelay[k] + " " + portPairFlightCounts[k]);
+            // }
+
+            // LINES
+            var lines = [];
+            var lines2 = [];
+            var line;
+            var line2;
+            for (var k in portPairDelay) {
+                if (portPairFlightCounts[k] > (maxFlightCount / 4)) {
+                    var origPortCoords = getPortCoords(JSON.parse(k).port1);
+                    var destPortCoords = getPortCoords(JSON.parse(k).port2);
+                    var origPortCoordsXY = projection([origPortCoords[0], origPortCoords[1]]);
+                    var destPortCoordsXY = projection([destPortCoords[0], destPortCoords[1]]);
+                    var from = { "x": origPortCoordsXY[0], "y": origPortCoordsXY[1] };
+                    var to = { "x": destPortCoordsXY[0], "y": destPortCoordsXY[1] };
+                    if (portPairDelay[k] > 40) {
+                        lines.push({source: from, target: to});
+                    } else {
+                        lines2.push({source: from, target: to});
+                    }
+                }
+
+                line = svg3.selectAll(".line")
+                    .data(lines)
+                    .enter().append("path")
+                    .attr("class", "line")
+                    .attr("d", diagonal)
+                    .style("stroke", GreenToRed(portPairDelay[k]))
+                    .style("opacity", .8)
+                    .attr("stroke-width", (portPairFlightCounts[k] / maxFlightCount) * 6)
+                    .style("fill", "none");
+                line2 = svg2.selectAll(".line")
+                    .data(lines2)
+                    .enter().append("path")
+                    .attr("class", "line")
+                    .attr("d", diagonal)
+                    .style("stroke", GreenToRed(portPairDelay[k]))
+                    .style("opacity", .8)
+                    .attr("stroke-width", (portPairFlightCounts[k] / maxFlightCount) * 6)
+                    .style("fill", "none");
+            }
+
+            portsData.forEach(function(portObj) {
+                var portCoordsXY = projection([portObj.long, portObj.lat]);
+
+                // plot airports
+                svg3.append("circle")
+                    .attr("cx", portCoordsXY[0])
+                    .attr("cy", portCoordsXY[1])
+                    .attr("r", 2)
+                    .style("fill", "white")
+                    .style("stroke", "#aaa")
+                    .style("stroke-width", 1)
+
+                svg2.append("circle")
+                    .attr("cx", portCoordsXY[0])
+                    .attr("cy", portCoordsXY[1])
+                    .attr("r", 2)
+                    .style("fill", "white")
+                    .style("stroke", "#aaa")
+                    .style("stroke-width", 1)
+
+                // label airports
+                svg3.append("text")
+                    .attr("dx", function(d) {return portCoordsXY[0] + 10})
+                    .attr("dy", function(d) {return portCoordsXY[1] + 5})
+                    .text(function(d) {return portObj.iata})
+                    .style("font-size", "75%")
+                    .style("opacity", .6)
+                    .style("fill", "white");
+
+                svg2.append("text")
+                    .attr("dx", function(d) {return portCoordsXY[0] + 10})
+                    .attr("dy", function(d) {return portCoordsXY[1] + 5})
+                    .text(function(d) {return portObj.iata})
+                    .style("font-size", "75%")
+                    .style("opacity", .6)
+                    .style("fill", "white");
+            });
+        });
+    });
+});
+</script>
+
+<div id="chart"><h2>Monthly trends of flight Cancellations and Delays</h2></div>
+
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<script>
+
+// ~~~~~~~~~~~~~~~~~~~~~~ FOR HISTOGRAM ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+var margin = {top: 20, right: 20, bottom: 30, left: 50},
+    width = 960 - margin.left - margin.right,
+    height = 500 - margin.top - margin.bottom;
+
+var x = d3.scale.ordinal()
+    .rangeRoundBands([0, width], .2);
+
+var y = d3.scale.linear()
+    .rangeRound([height, 0]);
+
+var color = d3.scale.ordinal()
+    .range([ "#a05d56", "#d0743c", "#ff8c00"]);
+
+var xAxis = d3.svg.axis()
+    .scale(x)
+    .orient("bottom");
+
+var yAxis = d3.svg.axis()
+    .scale(y)
+    .orient("left")
+    .tickFormat(d3.format(".2s"));
+
+var svg4 = d3.select("#chart").append("svg").style("fill","white")
+    .attr("width", width + margin.left + margin.right)
+    .attr("height", height + margin.top + margin.bottom)
+  .append("g")
+    .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+d3.csv("delay.csv", function(error, data) {
+  color.domain(d3.keys(data[0]).filter(function(key) { return key !== "Month"; }));
+
+  data.forEach(function(d) {
+    var y0 = 0;
+    d.nums = color.domain().map(function(name) { return {name: name, y0: y0, y1: y0 += +d[name]}; });
+    d.total = d.nums[d.nums.length - 1].y1;
+  });
+
+  
+
+  x.domain(data.map(function(d) { return d.Month; }));
+  y.domain([0, d3.max(data, function(d) { return d.total; })]);
+
+  svg4.append("g")
+      .attr("class", "x axis")
+      .attr("transform", "translate(0," + height + ")")
+      .call(xAxis);
+
+  svg4.append("g")
+      .attr("class", "y axis")
+      .call(yAxis)
+      .append("text")
+      .attr("transform", "rotate(-90)")
+      .attr("y", 6)
+      .attr("dy", ".71em")
+      .style("text-anchor", "end")
+      .style("color","#")
+      .text("No of Flights");
+
+  var state = svg4.selectAll(".state")
+      .data(data)
+    .enter().append("g")
+      .attr("class", "g")
+      .attr("transform", function(d) { return "translate(" + x(d.Month) + ",0)"; });
+
+  state.selectAll("rect")
+      .data(function(d) { return d.nums; })
+    .enter().append("rect")
+      .attr("width", x.rangeBand())
+      .attr("y", function(d) { return y(d.y1); })
+      .attr("height", function(d) { return y(d.y0) - y(d.y1); })
+      .style("fill", function(d) { return color(d.name); });
+
+  var legend = svg4.selectAll(".legend")
+      .data(color.domain().slice().reverse())
+    .enter().append("g")
+      .attr("class", "legend")
+      .attr("transform", function(d, i) { return "translate(0," + i * 20 + ")"; });
+
+  legend.append("rect")
+      .attr("x", width - 18)
+      .attr("width", 18)
+      .attr("height", 18)
+      .style("fill", color);
+
+  legend.append("text")
+      .attr("x", width - 24)
+      .attr("y", 9)
+      .attr("dy", ".35em")
+      .style("text-anchor", "end")
+      .text(function(d) { return d; });
+
+});
+
+</script>
+<div>
+<p> Unlike the first two visualizations, the chart above focusses on how delays/cancellations change with time. It shows monthly trends of cancellations and delays of flights across the country in 2008. We considered delays more than 15 minutes as it will include broader causes of delays including weather, system, carrier and security delays. Observe that high number of delays and cancellations in January and February are due to bad weather. Notice, the trends as we move away/towards holiday/vacation seasons. Notice that number of cancellations in June is roughly equal to the difference between cancellations in January and February.  Look how similar the numbers for lean travel months of April, September, October and November are.</p>
+</div>
+
+
+</body>
+</html>
